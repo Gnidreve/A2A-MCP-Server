@@ -1,0 +1,30 @@
+services:
+  a2a-mcp-bridge:
+    build: .
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8000
+      A2A_MCP_DATA_DIR: /data
+      A2A_SEED_AGENTS: '${A2A_SEED_AGENTS:-}'
+    volumes:
+      - bridge-data:/data
+    expose:
+      - '8000'
+    restart: unless-stopped
+
+  proxy:
+    build: ./proxy
+    depends_on:
+      - a2a-mcp-bridge
+    environment:
+      MCP_BEARER_TOKEN: '${MCP_BEARER_TOKEN:?Set MCP_BEARER_TOKEN in .env (see .env.example)}'
+    volumes:
+      - caddy_data:/data
+    expose:
+      - '8080'
+    restart: unless-stopped
+
+volumes:
+  bridge-data: null
+  caddy_data: null

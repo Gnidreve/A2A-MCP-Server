@@ -14,3 +14,7 @@ wheels/
 .env
 
 **.cache
+
+# Added by cargo
+
+/target
