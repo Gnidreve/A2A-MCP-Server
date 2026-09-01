@@ -1,73 +1,18 @@
 mod persistence;
 mod state;
+mod tools;
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use rmcp::{
-    ErrorData as McpError, ServerHandler, ServiceExt,
-    handler::server::router::tool::ToolRouter,
-    model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router,
-    transport::stdio,
-};
+use rmcp::{ServiceExt, transport::stdio};
 use tracing_subscriber::EnvFilter;
 
 use state::AppState;
+use tools::Bridge;
 
 const DEFAULT_TRANSPORT: &str = "stdio";
-
-#[derive(Clone)]
-struct Bridge {
-    state: Arc<AppState>,
-    // Read by the `#[tool_handler]`-generated `call_tool`/`list_tools` dispatch;
-    // rustc's dead-code pass doesn't see through that macro expansion.
-    #[allow(dead_code)]
-    tool_router: ToolRouter<Bridge>,
-}
-
-#[tool_router]
-impl Bridge {
-    fn new(state: Arc<AppState>) -> Self {
-        Self {
-            state,
-            tool_router: Self::tool_router(),
-        }
-    }
-
-    /// Placeholder health-check tool for Phase 1. Registry/A2A tools
-    /// (register_agent, send_message, ...) land in Phase 2+.
-    #[tool(description = "Report bridge status: version and number of registered agents")]
-    async fn status(&self) -> Result<CallToolResult, McpError> {
-        let agent_count = self.state.agents.read().await.0.len();
-        let body = serde_json::json!({
-            "status": "ok",
-            "version": env!("CARGO_PKG_VERSION"),
-            "registered_agents": agent_count,
-        });
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            body.to_string(),
-        )]))
-    }
-}
-
-#[tool_handler]
-impl ServerHandler for Bridge {
-    fn get_info(&self) -> ServerInfo {
-        // NB: `Implementation::from_build_env()` reads `env!("CARGO_CRATE_NAME")` at
-        // *rmcp's* compile time, so it always reports "rmcp" rather than this crate.
-        // Set it explicitly instead.
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                env!("CARGO_PKG_NAME"),
-                env!("CARGO_PKG_VERSION"),
-            ))
-            .with_instructions(
-                "MCP bridge to A2A agents. Register agents, then send them messages and \
-                 retrieve task results. See README for the full tool list as it lands."
-                    .to_string(),
-            )
-    }
-}
+const PERIODIC_SAVE_INTERVAL: Duration = Duration::from_secs(300);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -83,15 +28,25 @@ async fn main() -> anyhow::Result<()> {
     load_state(&mut state);
     let state = Arc::new(state);
 
+    // Only used to reach persist_agents/persist_task_mapping from here; the
+    // transports below build their own Bridge(s) sharing the same AppState.
+    let janitor = Bridge::new(state.clone());
+    tokio::spawn(periodic_save(janitor.clone()));
+
     let transport = std::env::var("MCP_TRANSPORT").unwrap_or_else(|_| DEFAULT_TRANSPORT.into());
 
-    match transport.as_str() {
-        "stdio" => run_stdio(state).await,
-        "streamable-http" => run_streamable_http(state).await,
+    let result = match transport.as_str() {
+        "stdio" => run_stdio(state.clone()).await,
+        "streamable-http" => run_streamable_http(state.clone()).await,
         other => {
             anyhow::bail!("unknown MCP_TRANSPORT '{other}', expected 'stdio' or 'streamable-http'");
         }
-    }
+    };
+
+    tracing::info!("saving state before exit");
+    janitor.persist_agents().await;
+    janitor.persist_task_mapping().await;
+    result
 }
 
 fn load_state(state: &mut AppState) {
@@ -105,6 +60,20 @@ fn load_state(state: &mut AppState) {
     );
     state.agents = tokio::sync::RwLock::new(agents);
     state.task_agent_mapping = tokio::sync::RwLock::new(mapping);
+}
+
+/// Defensive redundancy: every registry mutation already persists immediately
+/// (see `tools::Bridge`), plus a save-on-exit in `main`. This just covers the
+/// gap between "still running" and either of those.
+async fn periodic_save(bridge: Bridge) {
+    let mut interval = tokio::time::interval(PERIODIC_SAVE_INTERVAL);
+    interval.tick().await; // first tick fires immediately; skip it
+    loop {
+        interval.tick().await;
+        tracing::info!("performing periodic state save");
+        bridge.persist_agents().await;
+        bridge.persist_task_mapping().await;
+    }
 }
 
 async fn run_stdio(state: Arc<AppState>) -> anyhow::Result<()> {
