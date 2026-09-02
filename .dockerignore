@@ -1,0 +1,9 @@
+target/
+.git/
+__pycache__/
+*.py[oc]
+.venv/
+.env
+*.egg-info/
+registered_agents.json
+task_agent_mapping.json

@@ -1,0 +1,23 @@
+[package]
+name = "a2a-mcp-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "MCP bridge server that lets MCP clients call out to A2A agents"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = "0.8.9"
+rmcp = { version = "3.1.4", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# Official A2A Rust SDK (https://github.com/a2aproject/a2a-rs).
+# Published on crates.io under the "-lf" name suffix; aliased back to `a2a`/`a2a-client` here.
+a2a = { package = "a2a-lf", git = "https://github.com/a2aproject/a2a-rs.git" }
+a2a-client = { package = "a2a-client-lf", git = "https://github.com/a2aproject/a2a-rs.git" }
+tokio-util = { version = "0.7.19", features = ["rt"] }

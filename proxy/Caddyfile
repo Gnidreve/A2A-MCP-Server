@@ -1,0 +1,12 @@
+{
+	admin off
+}
+
+:8080 {
+	@authorized {
+		header Authorization "Bearer {env.MCP_BEARER_TOKEN}"
+	}
+	reverse_proxy @authorized a2a-mcp-bridge:8000
+
+	respond "unauthorized" 401
+}

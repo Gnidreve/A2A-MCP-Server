@@ -1,0 +1,17 @@
+services:
+  a2a-mcp-bridge:
+    build: .
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8000
+      A2A_MCP_DATA_DIR: /data
+      A2A_SEED_AGENTS: '${A2A_SEED_AGENTS:-}'
+    volumes:
+      - bridge-data:/data
+    ports:
+      - '${MCP_PORT:-8000}:8000'
+    restart: unless-stopped
+
+volumes:
+  bridge-data: null
